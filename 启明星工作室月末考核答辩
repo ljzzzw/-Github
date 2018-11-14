@@ -1,0 +1,574 @@
+#include<reg52.h>
+#include<intrins.h> 
+#define uchar unsigned char
+#define uint unsigned int
+unsigned char code digit[10]={"0123456789"};
+unsigned char code Cent[]={"cent"}; 
+unsigned char TL;     //储存暂存器的温度低位
+unsigned char TH;    //储存暂存器的温度高位
+unsigned char TN;      //储存温度的整数部分
+sbit BF=P0^7;
+sbit RW=P1^1;
+sbit RS=P1^0;
+sbit EN=P2^5;
+sbit dula=P2^6;
+sbit wela=P2^7;
+sbit s1=P3^0;
+sbit s2=P3^1;
+sbit s3=P3^2;
+sbit s4=P3^3;
+sbit jia1=P3^5;
+sbit jia=P3^4;
+sbit rd=P3^7;
+sbit beep=P2^3;
+uchar count;
+char shi,fen,miao,tian,yue,nian,xingqi;
+uchar code table[]="  2018-05-01 2   ";
+uchar code table1[]="23:59:55        ";
+void delay1ms()
+{
+   unsigned char i,j;	
+	 for(i=0;i<4;i++)
+	  for(j=0;j<33;j++) ;		 
+ }
+  void cmg88()//关数码管
+{
+dula=1;  
+P0=0X00;
+dula=0;
+}
+/*****************************************************
+函数功能：延时若干毫秒
+入口参数：n
+***************************************************/
+ void delaynms(unsigned char n)
+ {
+   unsigned char i;
+	for(i=0;i<n;i++)
+	   delay1ms();
+ }
+/*****************************************************
+函数功能：判断液晶模块的忙碌状态
+返回值：result。result=1，忙碌;result=0，不忙
+***************************************************/
+bit BusyTest(void)
+  {
+    bit result;
+	RS=0;       //根据规定，RS为低电平，RW为高电平时，可以读状态
+    RW=1;
+    EN=1;        //E=1，才允许读写
+    _nop_();   //空操作
+    _nop_();
+    _nop_(); 
+    _nop_();   //空操作四个机器周期，给硬件反应时间	
+    result=BF;  //将忙碌标志电平赋给result
+   EN=0;         //将E恢复低电平
+   return result;
+  }
+/*****************************************************
+函数功能：将模式设置指令或显示地址写入液晶模块
+入口参数：dictate
+***************************************************/
+void WriteInstruction (unsigned char dictate)
+{   
+    while(BusyTest()==1);   //如果忙就等待
+	 RS=0;                  //根据规定，RS和R/W同时为低电平时，可以写入指令
+	 RW=0;   
+	 EN=0;                   //E置低电平(根据表8-6，写指令时，E为高脉冲，
+                           // 就是让E从0到1发生正跳变，所以应先置"0"
+	 _nop_();
+	 _nop_();               //空操作两个机器周期，给硬件反应时间
+	 P0=dictate;            //将数据送入P0口，即写入指令或地址
+	 _nop_();
+	 _nop_();
+	 _nop_();
+	 _nop_();               //空操作四个机器周期，给硬件反应时间
+	 EN=1;                   //E置高电平
+	 _nop_();
+	 _nop_();
+	 _nop_();
+	 _nop_();               //空操作四个机器周期，给硬件反应时间
+	  EN=0;                  //当E由高电平跳变成低电平时，液晶模块开始执行命令
+ } 
+/*****************************************************
+函数功能：指定字符显示的实际地址
+入口参数：x
+***************************************************/
+ void WriteAddress(unsigned char x)
+ {
+     WriteInstruction(x|0x80); //显示位置的确定方法规定为"80H+地址码x"
+ }
+/*****************************************************
+函数功能：将数据(字符的标准ASCII码)写入液晶模块
+入口参数：y(为字符常量)
+***************************************************/
+ void WriteData(unsigned char y)
+ {
+    while(BusyTest()==1);  
+	  RS=1;           //RS为高电平，RW为低电平时，可以写入数据
+	  RW=0;
+	  EN=0;            //E置低电平(根据表8-6，写指令时，E为高脉冲，
+                     // 就是让E从0到1发生正跳变，所以应先置"0"
+	  P0=y;           //将数据送入P0口，即将数据写入液晶模块
+	  _nop_();
+	  _nop_();
+ 	  _nop_();
+     _nop_();       //空操作四个机器周期，给硬件反应时间
+	  EN=1;           //E置高电平
+	  _nop_();
+	  _nop_();
+	  _nop_();
+	 _nop_();        //空操作四个机器周期，给硬件反应时间
+	 EN=0;            //当E由高电平跳变成低电平时，液晶模块开始执行命令
+ }
+/************************************************************************
+以下是DS18B20的操作程序
+ ************************************************************************/ 
+sbit DQ=P2^2;
+unsigned char time;   //设置全局变量，专门用于严格延时
+/*****************************************************
+函数功能：将DS18B20传感器初始化，读取应答信号
+出口参数：flag 
+***************************************************/
+bit Init_DS18B20(void)	
+{
+ bit flag;         //储存DS18B20是否存在的标志，flag=0，表示存在；flag=1，表示不存在
+ DQ = 1;           //先将数据线拉高
+ for(time=0;time<2;time++) //略微延时约6微秒
+     ;
+ DQ = 0;           //再将数据线从高拉低，要求保持480~960us
+ for(time=0;time<200;time++)  //略微延时约600微秒
+     ;         //以向DS18B20发出一持续480~960us的低电平复位脉冲 
+ DQ = 1;           //释放数据线（将数据线拉高） 
+  for(time=0;time<10;time++)
+     ;  //延时约30us（释放总线后需等待15~60us让DS18B20输出存在脉冲）
+ flag=DQ;          //让单片机检测是否输出了存在脉冲（DQ=0表示存在）      
+ for(time=0;time<200;time++)  //延时足够长时间，等待存在脉冲输出完毕
+      ;
+ return (flag);    //返回检测成功标志
+}
+/*****************************************************
+函数功能：从DS18B20读取一个字节数据
+出口参数：dat
+***************************************************/ 
+unsigned char ReadOneChar(void)
+ {
+		unsigned char i=0;	
+		unsigned char dat;  //储存读出的一个字节数据
+		for (i=0;i<8;i++)
+		 {
+		   
+		   DQ =1;       // 先将数据线拉高
+		   _nop_();	    //等待一个机器周期	 
+		   DQ = 0;      //单片机从DS18B20读书据时,将数据线从高拉低即启动读时序
+			dat>>=1;
+		   _nop_();     //等待一个机器周期		   
+		   DQ = 1;     //将数据线"人为"拉高,为单片机检测DS18B20的输出电平作准备
+		   for(time=0;time<2;time++)
+             ;      //延时约6us，使主机在15us内采样
+		   if(DQ==1)
+		      dat|=0x80;  //如果读到的数据是1，则将1存入dat
+			else
+				dat|=0x00;//如果读到的数据是0，则将0存入dat
+		     //将单片机检测到的电平信号DQ存入r[i]	
+		   for(time=0;time<8;time++)
+		      	;              //延时3us,两个读时序之间必须有大于1us的恢复期	
+	    }	                    
+	 return (dat);    //返回读出的十进制数据
+}
+/*****************************************************
+函数功能：向DS18B20写入一个字节数据
+入口参数：dat
+***************************************************/  
+WriteOneChar(unsigned char dat)
+{
+	unsigned char i=0;
+	for (i=0; i<8; i++)
+		 {
+		  DQ =1;         // 先将数据线拉高
+		  _nop_();	     //等待一个机器周期	 
+		  DQ=0;          //将数据线从高拉低时即启动写时序       
+		  DQ=dat&0x01;   //利用与运算取出要写的某位二进制数据,
+                       //并将其送到数据线上等待DS18B20采样	
+		 for(time=0;time<10;time++)	
+		     ;//延时约30us，DS18B20在拉低后的约15~60us期间从数据线上采样
+		  DQ=1;          //释放数据线		    
+		  for(time=0;time<1;time++)
+			  ;//延时3us,两个写时序间至少需要1us的恢复期
+		  dat>>=1;       //将dat中的各二进制位数据右移1位
+		 }
+	  for(time=0;time<4;time++); 
+	  return(dat);//稍作延时,给硬件一点反应时间
+}
+/*****************************************************
+函数功能：显示温度的单位(Cent)
+***************************************************/   
+void 	display_cent(void)
+{
+           unsigned char i;    
+	 	     WriteAddress(0x4c);        //写显示地址，将在第2行第13列开始显示	
+			   i = 0;                    //从第一个字符开始显示 
+				while(Cent[i] != '\0')     //只要没有写到结束标志，就继续写
+				{					
+					WriteData(Cent[i]);     //将字符常量写入LCD
+					i++;                 //指向下一个字符
+				}	
+}
+/*****************************************************
+函数功能：显示温度的整数部分
+入口参数：x
+***************************************************/ 
+void display_temp1(unsigned char x)
+{
+ unsigned char j,k,l;     //j,k,l分别储存温度的百位、十位和个位
+	j=x/100;              //取百位
+	k=(x%100)/10;    //取十位
+	l=x%10;             //取个位  
+	WriteAddress(0x49);    //写显示地址,将在第2行第7列开始显示
+	WriteData(digit[j]);    //将百位数字的字符常量写入LCD
+	WriteData(digit[k]);    //将十位数字的字符常量写入LCD
+	WriteData(digit[l]);    //将个位数字的字符常量写入LCD   
+ }
+/*****************************************************
+函数功能：做好读温度的准备
+***************************************************/ 
+void ReadyReadTemp(void)
+{
+      Init_DS18B20();     //将DS18B20初始化
+		WriteOneChar(0xCC); // 跳过读序号列号的操作
+		WriteOneChar(0x44); // 启动温度转换	  
+	   for(time=0;time<100;time++)
+	            ;	 //温度转换需要一点时间
+		Init_DS18B20();     //将DS18B20初始化
+		WriteOneChar(0xCC); //跳过读序号列号的操作
+		WriteOneChar(0xBE); //读取温度寄存器,前两个分别是温度的低位和高位	
+}
+
+void wait(void)
+{
+	 P0=0xff;
+	 do
+	 {
+	 	RS=0;
+		RW=1;
+		EN=0;
+		EN=1;
+	 }
+	 while(BF==1);
+	 EN=0;
+}
+void delay(uint z)
+{
+	uint x,y;
+	for(x=z;x>0;x--)
+		for(y=110;y>0;y--);
+}
+void di()
+{
+		 beep=0;
+		 delay(100);
+		 beep=1;
+}
+void write_com(uchar com)
+{
+	wait();
+	EN=0;
+	P0=com;
+	delay(5);
+	RS=0;
+	RW=0;
+	EN=1;
+	delay(5);
+	EN=0;
+}	  
+void write_date(uchar date)
+{
+	wait();
+	EN=0;
+	P0=date;
+	delay(5);
+	RS=1;
+	RW=0;
+	EN=1;
+	delay(5);
+	EN=0;
+}
+void init()
+{
+	uchar num;
+	dula=0;
+	wela=0;
+	EN=0;
+	miao=55;
+	fen=59;
+	shi=23;
+	tian=1;
+	yue=5;
+	nian=18;
+	xingqi=2;
+	 write_com(0x38);	   //16*2显示，5*7点阵，8位数据接口
+	 write_com(0x0c);	   //显示器开，光标开，光标允许闪烁
+	 write_com(0x06);	   //文字不动，光标自动右移
+	 write_com(0x01);	   //清屏
+	 write_com(0x80);
+	 for(num=0;num<15;num++)
+	{
+	 write_date(table[num]);
+	 delay(5);
+	 }
+	 write_com(0x80+0x40);
+	 for(num=0;num<12;num++)
+	 {
+	 	 write_date(table1[num]);
+	 delay(5);
+	 }
+	 TMOD=0x01;
+	 TH0=(65536-50000)/256;
+	 TL0=(65536-50000)%256;
+	 EA=1;
+	 ET0=1;
+	 TR0=1;
+}
+void write_sfm(uchar add,uchar date)
+{
+	uchar shi,ge;
+	shi=date/10;
+	ge=date%10;
+	write_com(0x80+0x40+add);
+	write_date(0x30+shi);
+	write_date(0x30+ge);
+}	
+void write_sft(uchar add,uchar date)
+{														  
+	uchar shi,ge;
+	shi=date/10;
+	ge=date%10;
+	write_com(0x80+add);
+	write_date(0x30+shi);
+	write_date(0x30+ge);
+}
+void write_sfx(uchar add,uchar date)
+{														  
+	uchar ge;
+	ge=date;
+	write_com(0x80+add);
+	write_date(0x30+ge);
+}									
+void keyscan() //键盘控制调整时间
+{
+	rd=0;
+	TR0=1;
+	if(s1==0)
+	{
+	delay(5);			
+	if(s1==0)																																												
+	{	 
+	TR0=1;	if(jia==0)
+			{
+				delay(5);
+				if(jia==0)
+				{										
+					miao++;
+					if(miao==60)
+					miao=0;
+					write_com(0x80+0x40+6);
+					write_sfm(6,miao);	TR0=1;
+				}
+				while(!jia);									
+			}						
+	}					
+}	 									
+	if(s2==0)
+	{
+	delay(5);
+	if(s2==0)																																											
+	{
+		if(jia==0)
+				{										
+					fen++;
+					if(fen==60)
+					fen=0;
+					write_com(0x80+0x40+3);
+					write_sfm(3,fen);TR0=1;
+				}		while(!jia);										
+	}										
+            }										
+	if(s3==0)
+	{
+	delay(5);
+	if(s3==0)																																												
+	{
+	if(jia==0)
+				{										
+					shi++;
+					if(shi==24)
+					shi=0;
+					write_com(0x80+0x40+0);
+					write_sfm(0,shi);TR0=1;
+				}	while(!jia);																																																										  	  																															
+	}
+	
+	}	 
+					
+if(s1==0)
+{
+delay(5);
+if(s1==0)
+	{	
+if(jia1==0)									
+				{	tian++;
+					if(tian==32)
+					tian=1;
+					write_com(0x80+10);
+					write_sft(10,tian);	TR0=1;
+				}	 while(!jia1);
+	}
+}			
+
+
+	if(s2==0)
+{
+delay(5);
+if(s2==0)
+	{	
+if(jia1==0)									
+				{	yue++;
+					if(yue==13)
+					yue=1;
+					write_com(0x80+7);
+					write_sft(7,yue);	TR0=1;
+				}	 while(!jia1);
+	}
+}						
+
+	if(s3==0)
+{
+delay(5);
+if(s3==0)
+	{	
+if(jia1==0)									
+				{	nian++;
+					if(nian==100)
+					nian=1;
+					write_com(0x80+4);
+					write_sft(4,nian);	TR0=1;
+				}	 while(!jia1);
+	}
+}				
+if(s4==0)
+{
+	delay(5);
+	if(s4==0)
+	{
+		xingqi++;
+		if(xingqi==8)
+		xingqi=1;
+		write_com(0x80+13);
+		write_sfx(13,xingqi);
+		TR0=1;
+	}		  while(!s4);
+}				   
+					else	
+						TR0=1;
+						write_com(0x0c);																															
+}
+void main()
+{	 
+	init();
+	 P1=0x00;
+	  cmg88();
+	   delaynms(5);        //延时5ms给硬件一点反应时间	
+		if(Init_DS18B20()==1)	 
+      display_cent();      //显示温度的单位
+   while(1)                //不断检测并显示温度
+	 {	
+		ReadyReadTemp();     //读温度准备
+	   TL=ReadOneChar();    //先读的是温度值低位
+		TH=ReadOneChar();    //接着读的是温度值高位
+		TN=TH*16+TL/16;      //实际温度值=(TH*256+TL)/16,即：TH*16+TL/16			                 
+	   display_temp1(TN);    //显示温度的整数部分
+	   display_cent();  
+	   keyscan();  
+	if(count==18)
+	{
+		count=0;
+		miao++;
+		if(miao==60)
+		{
+		miao=0;
+		fen++;
+			if(fen==60)
+			{	  di();
+				fen=0;
+				shi++;
+					if(shi==24)
+					{		di();
+						shi=0;
+						tian++;	
+						xingqi++;
+						if(xingqi==8)
+						{
+							xingqi=1;
+						} 				
+if(yue==1||yue==3||yue==5||yue==7||yue==8||yue==10||yue==12)
+	{
+			if(tian==32)
+			{di();delay(100);di();
+			tian=1;
+			yue++;}
+		  	if(yue==13)
+		{di();	
+		yue=1;
+			nian++;	
+		  	write_sft(4,nian);}}
+if(yue==4||yue==6||yue==9||yue==11)
+	{	
+	  		if(tian==31)
+			{di();tian=1;
+	   		yue++;}
+			if(yue==13)
+		{	di();yue=1;
+			nian++;	
+		   	write_sft(4,nian);}}
+if(yue==2)
+	{
+	if(nian%4==0)
+		{if(tian==30)
+		{di();tian=1;
+		yue++;}
+	
+	   	if(yue==13)
+{di();	yue=1;
+		nian++;
+			write_sft(4,nian); }}
+	if(nian%4!=0)
+	{
+	   if(tian==29)
+		{
+		di();tian=1;
+		yue++;
+		}
+	
+	   	if(yue==13)
+{di();	yue=1;
+		nian++;
+			write_sft(4,nian); 
+	}	}
+	}
+						  write_sft(7,yue);
+						  write_sfx(13,xingqi);
+						write_sft(10,tian);								
+					}  	write_sfm(0,shi);
+			}
+		}	   		write_sfm(3,fen);
+} 
+		write_sfm(6,miao);	 	
+	}
+}
+void timer0() interrupt 1
+{
+	 TH0=(65536-50000)/256;
+	 TL0=(65536-50000)%256;
+	 count++;
+}
+}
